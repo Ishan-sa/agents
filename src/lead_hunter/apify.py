@@ -42,8 +42,17 @@ def scrape_google_maps(
 
     items = list(client.dataset(dataset_id).iterate_items())
     businesses = [_to_business(item) for item in items]
-    cost = float(run.get("usageTotalUsd", 0.0))
-    return ApifyResult(businesses=businesses, cost_usd=cost, run_id=run.get("id", ""))
+
+    # usageTotalUsd is computed by the billing aggregator and is often $0
+    # at the moment .call() returns. Refetch the run to get the final figure.
+    run_id = run.get("id", "")
+    if run_id:
+        refreshed = client.run(run_id).get()
+        if refreshed:
+            run = refreshed
+
+    cost = float(run.get("usageTotalUsd") or 0.0)
+    return ApifyResult(businesses=businesses, cost_usd=cost, run_id=run_id)
 
 
 def _to_business(item: dict) -> Business:
