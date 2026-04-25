@@ -1,0 +1,26 @@
+# Secrets — never commit
+.env
+.env.local
+service-account.json
+*-service-account.json
+gmail-oauth-credentials.json
+gmail-token.json
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# uv
+.uv/
+
+# Per-agent local data
+**/data/*
+!**/data/.gitkeep
+
+# macOS
+.DS_Store
