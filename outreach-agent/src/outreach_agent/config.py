@@ -12,8 +12,19 @@ class Thresholds:
     BATCH_SIZE_HARD_CAP: int = 20
     FETCH_TIMEOUT_SECONDS: int = 15
     FETCH_RETRIES: int = 1
-    CONCURRENCY: int = 1
-    CLAUDE_TIMEOUT_SECONDS: int = 120
+    CONCURRENCY: int = 3
+    CLAUDE_TIMEOUT_SECONDS: int = 120  # legacy; kept for back-compat
+    LLM_TIMEOUT_SECONDS: int = 120
+
+
+def llm_settings() -> dict:
+    """Return OpenRouter API key + model. Raises if key missing."""
+    load_dotenv()
+    key = os.getenv("OPENROUTER_API_KEY", "").strip()
+    if not key:
+        raise RuntimeError("OPENROUTER_API_KEY not set in .env")
+    model = os.getenv("OPENROUTER_MODEL", "google/gemini-2.5-flash").strip()
+    return {"api_key": key, "model": model}
 
 
 @dataclass(frozen=True)

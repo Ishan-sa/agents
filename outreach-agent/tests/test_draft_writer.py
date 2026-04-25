@@ -28,84 +28,94 @@ def test_build_user_prompt_includes_lead_facts_and_truncates_html():
     assert "Bob Smith" in prompt
     assert "https://bobs.ca" in prompt
     assert "Mobile-broken site" in prompt
-    assert len(prompt) < 150_000  # truncated
+    assert len(prompt) < 150_000
 
 
-def _completed(stdout_text: str, returncode: int = 0, stderr: str = ""):
-    m = MagicMock()
-    m.returncode = returncode
-    m.stdout = stdout_text
-    m.stderr = stderr
-    return m
+def _openrouter_response(content: str, status: int = 200, body: str | None = None) -> MagicMock:
+    resp = MagicMock()
+    resp.status_code = status
+    if body is not None:
+        resp.text = body
+        resp.json.side_effect = json.JSONDecodeError("no", body, 0)
+    else:
+        payload = {"choices": [{"message": {"content": content}}]}
+        resp.text = json.dumps(payload)
+        resp.json.return_value = payload
+    return resp
+
+
+@pytest.fixture(autouse=True)
+def _set_openrouter_env(monkeypatch):
+    monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or-test")
+    monkeypatch.setenv("OPENROUTER_MODEL", "google/gemini-2.5-flash")
 
 
 def test_write_draft_parses_draft_action():
-    payload = json.dumps({
-        "result": json.dumps({
-            "action": "draft",
-            "subject": "noticed something on bobs.ca",
-            "body": "hey bob,\n\n...\n\nishan",
-            "skip_reason": "",
-        })
+    content = json.dumps({
+        "action": "draft",
+        "subject": "Noticed something on bobs.ca",
+        "body": "Hey Bob,\n\n...\n\nIshan",
+        "skip_reason": "",
     })
-    with patch("outreach_agent.draft_writer.subprocess.run",
-               return_value=_completed(payload)):
-        result = write_draft(
-            lead=_lead(), html="<html/>",
-            system_prompt="SYSTEM_PROMPT_HERE",
-        )
+    with patch("outreach_agent.draft_writer.httpx.post",
+               return_value=_openrouter_response(content)):
+        result = write_draft(lead=_lead(), html="<html/>", system_prompt="SYS")
     assert result.is_draft()
-    assert result.subject == "noticed something on bobs.ca"
-    assert "hey bob" in result.body
+    assert result.subject == "Noticed something on bobs.ca"
+    assert "Hey Bob" in result.body
 
 
 def test_write_draft_parses_skip_action():
-    payload = json.dumps({
-        "result": json.dumps({
-            "action": "skip",
-            "subject": "",
-            "body": "",
-            "skip_reason": "site is in punjabi only",
-        })
+    content = json.dumps({
+        "action": "skip", "subject": "", "body": "",
+        "skip_reason": "site is in punjabi only",
     })
-    with patch("outreach_agent.draft_writer.subprocess.run",
-               return_value=_completed(payload)):
-        result = write_draft(
-            lead=_lead(), html="<html/>",
-            system_prompt="SYSTEM_PROMPT_HERE",
-        )
+    with patch("outreach_agent.draft_writer.httpx.post",
+               return_value=_openrouter_response(content)):
+        result = write_draft(lead=_lead(), html="<html/>", system_prompt="SYS")
     assert result.is_skip()
     assert "punjabi" in result.skip_reason
 
 
-def test_write_draft_passes_system_prompt_via_cli_arg():
-    payload = json.dumps({
-        "result": json.dumps({
-            "action": "skip", "subject": "", "body": "",
-            "skip_reason": "test",
-        })
+def test_write_draft_strips_markdown_fences():
+    content = "```json\n" + json.dumps({
+        "action": "draft", "subject": "S", "body": "B", "skip_reason": "",
+    }) + "\n```"
+    with patch("outreach_agent.draft_writer.httpx.post",
+               return_value=_openrouter_response(content)):
+        result = write_draft(lead=_lead(), html="<html/>", system_prompt="SYS")
+    assert result.is_draft()
+    assert result.subject == "S"
+
+
+def test_write_draft_sends_system_and_user_messages():
+    content = json.dumps({
+        "action": "skip", "subject": "", "body": "", "skip_reason": "test",
     })
-    with patch("outreach_agent.draft_writer.subprocess.run",
-               return_value=_completed(payload)) as mock_run:
-        write_draft(
-            lead=_lead(), html="<html/>",
-            system_prompt="MY_SYSTEM_PROMPT",
-        )
-    args = mock_run.call_args[0][0]
-    assert "--system-prompt" in args
-    sys_idx = args.index("--system-prompt")
-    assert args[sys_idx + 1] == "MY_SYSTEM_PROMPT"
+    with patch("outreach_agent.draft_writer.httpx.post",
+               return_value=_openrouter_response(content)) as mock_post:
+        write_draft(lead=_lead(), html="<html/>", system_prompt="MY_SYSTEM_PROMPT")
+    sent = mock_post.call_args.kwargs["json"]
+    assert sent["model"] == "google/gemini-2.5-flash"
+    assert sent["messages"][0]["role"] == "system"
+    assert sent["messages"][0]["content"] == "MY_SYSTEM_PROMPT"
+    assert sent["messages"][1]["role"] == "user"
+    auth = mock_post.call_args.kwargs["headers"]["Authorization"]
+    assert auth == "Bearer sk-or-test"
 
 
-def test_write_draft_raises_on_nonzero_exit():
-    with patch("outreach_agent.draft_writer.subprocess.run",
-               return_value=_completed("", returncode=2, stderr="auth fail")):
-        with pytest.raises(RuntimeError, match="claude -p exit 2.*auth fail"):
+def test_write_draft_raises_on_non_200():
+    with patch("outreach_agent.draft_writer.httpx.post",
+               return_value=_openrouter_response("", status=429, body="rate limited")):
+        with pytest.raises(RuntimeError, match="HTTP 429.*rate limited"):
             write_draft(lead=_lead(), html="<html/>", system_prompt="X")
 
 
 def test_write_draft_raises_on_bad_json():
-    with patch("outreach_agent.draft_writer.subprocess.run",
-               return_value=_completed("not json")):
-        with pytest.raises(RuntimeError, match="claude -p"):
+    bad = MagicMock()
+    bad.status_code = 200
+    bad.text = "not json"
+    bad.json.side_effect = json.JSONDecodeError("no", "not json", 0)
+    with patch("outreach_agent.draft_writer.httpx.post", return_value=bad):
+        with pytest.raises(RuntimeError, match="unparseable"):
             write_draft(lead=_lead(), html="<html/>", system_prompt="X")

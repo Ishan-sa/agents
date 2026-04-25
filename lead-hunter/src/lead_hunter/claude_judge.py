@@ -1,13 +1,28 @@
 from __future__ import annotations
 
 import json
-import subprocess
+import os
 from dataclasses import dataclass
 from typing import Literal
 
+import httpx
+from dotenv import load_dotenv
+
 EmailConfidence = Literal["high", "medium", "low", "none"]
 
-MAX_HTML_CHARS = 120_000  # leaves room for prompt overhead under CLI arg limits
+MAX_HTML_CHARS = 120_000
+
+OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
+LLM_TIMEOUT_SECONDS = 120
+
+
+def _llm_settings() -> dict:
+    load_dotenv()
+    key = os.getenv("OPENROUTER_API_KEY", "").strip()
+    if not key:
+        raise RuntimeError("OPENROUTER_API_KEY not set in .env")
+    model = os.getenv("OPENROUTER_MODEL", "google/gemini-2.5-flash").strip()
+    return {"api_key": key, "model": model}
 
 
 def _parse_inner_json(text: str) -> dict:
@@ -106,33 +121,40 @@ def judge_website(
     else:
         user_prompt = build_judge_prompt(business_name, website_url, html)
 
-    cmd = [
-        "claude", "-p",
-        "--model", "claude-sonnet-4-6",
-        "--output-format", "json",
-        "--max-turns", "1",
-        "--tools=",  # disable all tools — pure single-shot LLM call
-        "--system-prompt", _SYSTEM_PROMPT,
-        user_prompt,
-    ]
-
-    proc = subprocess.run(
-        cmd,
-        capture_output=True,
-        text=True,
-        timeout=120,
-    )
-    if proc.returncode != 0:
-        raise RuntimeError(f"claude -p failed: {proc.stderr.strip() or 'no stderr'}")
+    settings = _llm_settings()
+    payload_req = {
+        "model": settings["model"],
+        "messages": [
+            {"role": "system", "content": _SYSTEM_PROMPT},
+            {"role": "user", "content": user_prompt},
+        ],
+        "response_format": {"type": "json_object"},
+        "temperature": 0.3,
+    }
+    headers = {
+        "Authorization": f"Bearer {settings['api_key']}",
+        "Content-Type": "application/json",
+    }
 
     try:
-        outer = json.loads(proc.stdout)
-        result_field = outer["result"]
-        payload = (
-            _parse_inner_json(result_field) if isinstance(result_field, str) else result_field
+        resp = httpx.post(
+            OPENROUTER_URL,
+            json=payload_req,
+            headers=headers,
+            timeout=LLM_TIMEOUT_SECONDS,
         )
-    except (json.JSONDecodeError, KeyError, TypeError) as e:
-        raise RuntimeError(f"claude -p returned unparseable output: {e}: {proc.stdout[:500]}")
+    except httpx.HTTPError as e:
+        raise RuntimeError(f"openrouter request failed: {e}")
+
+    if resp.status_code != 200:
+        raise RuntimeError(f"openrouter HTTP {resp.status_code}: {resp.text[:500]}")
+
+    try:
+        data = resp.json()
+        content = data["choices"][0]["message"]["content"]
+        payload = _parse_inner_json(content)
+    except (json.JSONDecodeError, KeyError, IndexError, TypeError) as e:
+        raise RuntimeError(f"openrouter returned unparseable output: {e}: {resp.text[:500]}")
 
     return JudgeResult(
         site_score=int(payload["site_score"]),

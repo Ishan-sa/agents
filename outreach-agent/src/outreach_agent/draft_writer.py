@@ -1,25 +1,24 @@
 from __future__ import annotations
 
 import json
-import subprocess
 
-from .config import Thresholds
+import httpx
+
+from .config import Thresholds, llm_settings
 from .models import DraftResult, EligibleLead
 
 MAX_HTML_CHARS = 120_000
 
+OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
+
 
 def _parse_inner_json(text: str) -> dict:
-    """Claude sometimes wraps JSON in ```json ... ``` fences. Extract the
-    JSON object by finding the first '{' and the matching last '}'."""
+    """Strip markdown code fences if present, then slice to outermost {...}."""
     s = text.strip()
     if s.startswith("```"):
-        # strip opening fence (```json or ```)
         s = s.split("\n", 1)[1] if "\n" in s else s[3:]
-        # strip closing fence
         if s.endswith("```"):
             s = s[: -3].rstrip()
-    # As a final safety net, slice to the outermost {...}
     first = s.find("{")
     last = s.rfind("}")
     if first != -1 and last != -1 and last > first:
@@ -54,41 +53,45 @@ def write_draft(
     system_prompt: str,
 ) -> DraftResult:
     user_prompt = build_user_prompt(lead, html)
+    settings = llm_settings()
 
-    cmd = [
-        "claude", "-p",
-        "--model", "claude-sonnet-4-6",
-        "--output-format", "json",
-        "--max-turns", "1",
-        "--tools=",  # disable all tools — pure single-shot LLM call
-        "--system-prompt", system_prompt,
-        user_prompt,
-    ]
-
-    proc = subprocess.run(
-        cmd,
-        capture_output=True,
-        text=True,
-        timeout=Thresholds.CLAUDE_TIMEOUT_SECONDS,
-    )
-    if proc.returncode != 0:
-        err = proc.stderr.strip() or proc.stdout.strip() or "no output"
-        raise RuntimeError(f"claude -p exit {proc.returncode}: {err[:1000]}")
+    payload = {
+        "model": settings["model"],
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ],
+        "response_format": {"type": "json_object"},
+        "temperature": 0.7,
+    }
+    headers = {
+        "Authorization": f"Bearer {settings['api_key']}",
+        "Content-Type": "application/json",
+    }
 
     try:
-        outer = json.loads(proc.stdout)
-        result_field = outer["result"]
-        payload = (
-            _parse_inner_json(result_field) if isinstance(result_field, str) else result_field
+        resp = httpx.post(
+            OPENROUTER_URL,
+            json=payload,
+            headers=headers,
+            timeout=Thresholds.LLM_TIMEOUT_SECONDS,
         )
-    except (json.JSONDecodeError, KeyError, TypeError) as e:
-        raise RuntimeError(
-            f"claude -p returned unparseable output: {e}: {proc.stdout[:500]}"
-        )
+    except httpx.HTTPError as e:
+        raise RuntimeError(f"openrouter request failed: {e}")
+
+    if resp.status_code != 200:
+        raise RuntimeError(f"openrouter HTTP {resp.status_code}: {resp.text[:500]}")
+
+    try:
+        data = resp.json()
+        content = data["choices"][0]["message"]["content"]
+        parsed = _parse_inner_json(content)
+    except (json.JSONDecodeError, KeyError, IndexError, TypeError) as e:
+        raise RuntimeError(f"openrouter returned unparseable output: {e}: {resp.text[:500]}")
 
     return DraftResult(
-        action=payload["action"],
-        subject=str(payload.get("subject", "")),
-        body=str(payload.get("body", "")),
-        skip_reason=str(payload.get("skip_reason", "")),
+        action=parsed["action"],
+        subject=str(parsed.get("subject", "")),
+        body=str(parsed.get("body", "")),
+        skip_reason=str(parsed.get("skip_reason", "")),
     )
