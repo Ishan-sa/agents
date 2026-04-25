@@ -38,5 +38,5 @@ def test_thresholds_constants():
     assert Thresholds.BATCH_SIZE_HARD_CAP == 20
     assert Thresholds.FETCH_TIMEOUT_SECONDS == 15
     assert Thresholds.FETCH_RETRIES == 1
-    assert Thresholds.CONCURRENCY == 3
+    assert Thresholds.CONCURRENCY == 2
     assert Thresholds.CLAUDE_TIMEOUT_SECONDS == 120
