@@ -9,6 +9,21 @@ EmailConfidence = Literal["high", "medium", "low", "none"]
 
 MAX_HTML_CHARS = 120_000  # leaves room for prompt overhead under CLI arg limits
 
+
+def _parse_inner_json(text: str) -> dict:
+    """Claude sometimes wraps JSON in ```json ... ``` fences. Extract the
+    JSON object by stripping fences then slicing to the outermost {...}."""
+    s = text.strip()
+    if s.startswith("```"):
+        s = s.split("\n", 1)[1] if "\n" in s else s[3:]
+        if s.endswith("```"):
+            s = s[: -3].rstrip()
+    first = s.find("{")
+    last = s.rfind("}")
+    if first != -1 and last != -1 and last > first:
+        s = s[first : last + 1]
+    return json.loads(s)
+
 _SYSTEM_PROMPT = """You are a website quality auditor for a web agency that sells redesigns to local service businesses.
 
 You look at the HTML of a business's current website (or are told the site is unreachable) and score it against a rubric. Return ONLY valid JSON matching the schema — no prose, no code fences.
@@ -111,7 +126,10 @@ def judge_website(
 
     try:
         outer = json.loads(proc.stdout)
-        payload = json.loads(outer["result"]) if isinstance(outer.get("result"), str) else outer["result"]
+        result_field = outer["result"]
+        payload = (
+            _parse_inner_json(result_field) if isinstance(result_field, str) else result_field
+        )
     except (json.JSONDecodeError, KeyError, TypeError) as e:
         raise RuntimeError(f"claude -p returned unparseable output: {e}: {proc.stdout[:500]}")
 

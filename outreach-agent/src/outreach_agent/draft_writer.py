@@ -9,6 +9,24 @@ from .models import DraftResult, EligibleLead
 MAX_HTML_CHARS = 120_000
 
 
+def _parse_inner_json(text: str) -> dict:
+    """Claude sometimes wraps JSON in ```json ... ``` fences. Extract the
+    JSON object by finding the first '{' and the matching last '}'."""
+    s = text.strip()
+    if s.startswith("```"):
+        # strip opening fence (```json or ```)
+        s = s.split("\n", 1)[1] if "\n" in s else s[3:]
+        # strip closing fence
+        if s.endswith("```"):
+            s = s[: -3].rstrip()
+    # As a final safety net, slice to the outermost {...}
+    first = s.find("{")
+    last = s.rfind("}")
+    if first != -1 and last != -1 and last > first:
+        s = s[first : last + 1]
+    return json.loads(s)
+
+
 def build_user_prompt(lead: EligibleLead, html: str) -> str:
     truncated = html[:MAX_HTML_CHARS]
     truncation_note = (
@@ -59,7 +77,7 @@ def write_draft(
         outer = json.loads(proc.stdout)
         result_field = outer["result"]
         payload = (
-            json.loads(result_field) if isinstance(result_field, str) else result_field
+            _parse_inner_json(result_field) if isinstance(result_field, str) else result_field
         )
     except (json.JSONDecodeError, KeyError, TypeError) as e:
         raise RuntimeError(
