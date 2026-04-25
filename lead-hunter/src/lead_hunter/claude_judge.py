@@ -111,6 +111,7 @@ def judge_website(
         "--model", "claude-sonnet-4-6",
         "--output-format", "json",
         "--max-turns", "1",
+        "--tools=",  # disable all tools — pure single-shot LLM call
         "--system-prompt", _SYSTEM_PROMPT,
         user_prompt,
     ]
