@@ -12,7 +12,7 @@ class Thresholds:
     BATCH_SIZE_HARD_CAP: int = 20
     FETCH_TIMEOUT_SECONDS: int = 15
     FETCH_RETRIES: int = 1
-    CONCURRENCY: int = 2
+    CONCURRENCY: int = 1
     CLAUDE_TIMEOUT_SECONDS: int = 120
 
 

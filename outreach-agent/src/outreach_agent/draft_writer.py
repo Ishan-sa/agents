@@ -71,7 +71,8 @@ def write_draft(
         timeout=Thresholds.CLAUDE_TIMEOUT_SECONDS,
     )
     if proc.returncode != 0:
-        raise RuntimeError(f"claude -p failed: {proc.stderr.strip() or 'no stderr'}")
+        err = proc.stderr.strip() or proc.stdout.strip() or "no output"
+        raise RuntimeError(f"claude -p exit {proc.returncode}: {err[:1000]}")
 
     try:
         outer = json.loads(proc.stdout)

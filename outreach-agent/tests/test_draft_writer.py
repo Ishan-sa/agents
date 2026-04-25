@@ -100,7 +100,7 @@ def test_write_draft_passes_system_prompt_via_cli_arg():
 def test_write_draft_raises_on_nonzero_exit():
     with patch("outreach_agent.draft_writer.subprocess.run",
                return_value=_completed("", returncode=2, stderr="auth fail")):
-        with pytest.raises(RuntimeError, match="auth fail"):
+        with pytest.raises(RuntimeError, match="claude -p exit 2.*auth fail"):
             write_draft(lead=_lead(), html="<html/>", system_prompt="X")
 
 
