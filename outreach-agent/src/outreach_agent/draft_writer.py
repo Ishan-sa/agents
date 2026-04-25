@@ -39,6 +39,7 @@ def write_draft(
 
     cmd = [
         "claude", "-p",
+        "--model", "claude-sonnet-4-6",
         "--output-format", "json",
         "--max-turns", "1",
         "--system-prompt", system_prompt,

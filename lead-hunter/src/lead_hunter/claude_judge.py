@@ -93,6 +93,7 @@ def judge_website(
 
     cmd = [
         "claude", "-p",
+        "--model", "claude-sonnet-4-6",
         "--output-format", "json",
         "--max-turns", "1",
         "--system-prompt", _SYSTEM_PROMPT,
