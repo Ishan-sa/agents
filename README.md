@@ -147,9 +147,125 @@ prerequisites:
 - **Gmail / Sheets:** free.
 - **Per qualified lead through the full pipeline:** ~$0.05.
 
+## Daily / weekly playbook — what to run, when
+
+### When to run each agent
+
+| Agent           | Frequency             | Trigger                                              |
+|-----------------|-----------------------|------------------------------------------------------|
+| `lead-hunter`   | As needed             | When the qualified-lead backlog is running low, or you want to try a new niche/city. |
+| `outreach-agent`| ~Once per send batch  | Before you sit down to do outreach for the day. Drafts are queued in Gmail; you review + send. |
+| `reply-handler` | Daily (ideally)       | Every morning — picks up replies, drafts responses, fires follow-ups on schedule. |
+
+### Step-by-step: a full cycle, end-to-end
+
+**1. Find new leads** (only when backlog is thin)
+
+```bash
+cd lead-hunter
+uv run python -m lead_hunter --niche "plumbers" --city "Burnaby BC" --max-results 50
+```
+
+New rows land in the `Leads` tab with `status=""` (qualified, ready for outreach).
+
+**2. Draft cold emails**
+
+```bash
+cd outreach-agent
+uv run python -m outreach_agent --batch-size 5 --dry-run     # preview first
+uv run python -m outreach_agent --batch-size 5               # for real
+```
+
+For each lead this drafts: subject + body, stages a Gmail draft, sets
+`status=drafted`, and writes the `gmail_draft_id` to the sheet.
+
+**3. Review + send drafts (manual, in Gmail)**
+
+Open Gmail → Drafts. Edit anything that needs tweaking. Click Send. This is
+the ONLY step that's non-automated — and intentionally so. It protects your
+sender reputation.
+
+**4. Run reply-handler daily**
+
+```bash
+cd reply-handler
+uv run python -m reply_handler all --dry-run      # preview
+uv run python -m reply_handler all                # for real
+```
+
+This does three things in one shot:
+
+- **sync-sent** — finds drafts you actually sent. Flips `drafted → sent`,
+  records `gmail_thread_id`, `gmail_message_id`, `date_sent`.
+- **check-replies** — for each `sent` thread, looks for an inbound reply.
+  Classifies it (`interested` / `question` / `declined` / `auto_reply` /
+  `none`) and drafts a contextual in-thread response. Sets
+  `status=replied_<class>`.
+- **follow-ups** — for `sent` threads with no reply: drafts nudge #1 at 5d,
+  nudge #2 at 12d, marks `cold` at 25d. Cadence configurable via
+  `reply-handler/.env`.
+
+You can also run any one job individually:
+
+```bash
+uv run python -m reply_handler sync-sent
+uv run python -m reply_handler check-replies
+uv run python -m reply_handler follow-ups
+```
+
+`--dry-run` works before or after the subcommand: `... all --dry-run` or
+`... --dry-run all`.
+
+**5. Review + send reply / follow-up drafts (manual, in Gmail)**
+
+Same as step 3 — open Gmail, review the new in-thread drafts, click Send.
+
+### What you should be running each day, minimum
+
+```bash
+# morning, takes ~30 seconds
+cd ~/Desktop/my-apps/agents/reply-handler
+uv run python -m reply_handler all
+# then: open Gmail, review whatever's in Drafts, send what looks good
+```
+
+That alone keeps the pipeline alive — replies get answered, follow-ups go
+out on schedule. Lead-hunter and outreach-agent only need to run when you're
+actively topping up the funnel.
+
+### Status flow at a glance
+
+```
+(empty) ──[lead-hunter qualifies it]──▶ ready for outreach
+                                            │
+                                  [outreach-agent]
+                                            │
+                                            ▼
+                                         drafted ──[you send in Gmail]──▶
+                                                                          │
+                                                  [reply-handler sync-sent]
+                                                                          │
+                                                                          ▼
+                                                                        sent
+                          ┌───────────────────────────────────────────────┤
+                          │                                               │
+              [check-replies finds reply]                  [no reply for 5/12/25 days]
+                          │                                               │
+                          ▼                                               ▼
+              replied_interested                              followup_1_drafted
+              replied_question                                followup_2_drafted
+              replied_declined                                cold
+              replied_auto_reply
+              replied_none
+```
+
 ## What's next (ideas, not built yet)
 
-- Mockup-generation agent: when reply-handler classifies a reply as
+- **Cron / launchd** that runs `reply-handler all` automatically each morning.
+- **Send-rate guardrails** in outreach-agent (max-per-day, randomized spacing)
+  to protect sender reputation.
+- **Mockup-generation agent:** when reply-handler classifies a reply as
   `interested` and they want the free mockup, auto-generate a 1-page rebuild.
-- LinkedIn outreach: same shape as outreach-agent but a different channel.
-- Lead-pool expansion: just running lead-hunter on more niche/city combos.
+- **A/B testing harness** for cold-email opening hooks, scored by reply rate.
+- **LinkedIn outreach:** same shape as outreach-agent but a different channel.
+- **Lead-pool expansion:** just running lead-hunter on more niche/city combos.
