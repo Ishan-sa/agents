@@ -29,11 +29,22 @@ def _build_parser() -> argparse.ArgumentParser:
         "--dry-run", action="store_true",
         help="run all logic but skip Gmail draft creation and Sheet writes; print to stdout",
     )
+
+    # share --dry-run with each subparser so it works either before or after
+    # the subcommand (argparse otherwise rejects "all --dry-run")
+    # default=SUPPRESS prevents the subparser from overwriting a --dry-run that
+    # was supplied before the subcommand
+    common = argparse.ArgumentParser(add_help=False)
+    common.add_argument(
+        "--dry-run", action="store_true",
+        default=argparse.SUPPRESS, help=argparse.SUPPRESS,
+    )
+
     sub = parser.add_subparsers(dest="job", required=True)
-    sub.add_parser("sync-sent", help="detect drafts that have been sent")
-    sub.add_parser("check-replies", help="classify + draft replies for inbound messages")
-    sub.add_parser("follow-ups", help="cadence-based follow-up nudges")
-    sub.add_parser("all", help="run sync-sent, check-replies, then follow-ups in order")
+    sub.add_parser("sync-sent", parents=[common], help="detect drafts that have been sent")
+    sub.add_parser("check-replies", parents=[common], help="classify + draft replies for inbound messages")
+    sub.add_parser("follow-ups", parents=[common], help="cadence-based follow-up nudges")
+    sub.add_parser("all", parents=[common], help="run sync-sent, check-replies, then follow-ups in order")
     return parser
 
 
