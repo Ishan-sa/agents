@@ -259,13 +259,8 @@ actively topping up the funnel.
               replied_none
 ```
 
-## What's next (ideas, not built yet)
+## What's next
 
-- **Cron / launchd** that runs `reply-handler all` automatically each morning.
-- **Send-rate guardrails** in outreach-agent (max-per-day, randomized spacing)
-  to protect sender reputation.
-- **Mockup-generation agent:** when reply-handler classifies a reply as
-  `interested` and they want the free mockup, auto-generate a 1-page rebuild.
-- **A/B testing harness** for cold-email opening hooks, scored by reply rate.
-- **LinkedIn outreach:** same shape as outreach-agent but a different channel.
-- **Lead-pool expansion:** just running lead-hunter on more niche/city combos.
+See [`ROADMAP.md`](./ROADMAP.md) for the running backlog of ideas to make this
+pipeline more advanced. Items get checked off and moved to the "Shipped"
+section as they land in the codebase.
